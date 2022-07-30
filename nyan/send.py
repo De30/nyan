@@ -86,21 +86,20 @@ def main(
         new_clusters = clusterer(docs)
         print("{} clusters after filtering".format(len(new_clusters)))
 
-        new_clusters = new_clusters[-10:]
         urls2messages = posted_clusters.urls2messages
         for i, cluster in enumerate(new_clusters):
             message_ids = [urls2messages.get(url) for url in cluster.urls if url in urls2messages]
             if message_ids:
-                message_id = Counter(message_ids).most_common()[0][0]
-                posted_cluster = posted_clusters[message_id]
-                discussion_message_id = client.get_discussion(message_id)
+                message_id, issue_name = Counter(message_ids).most_common()[0][0]
+                posted_cluster = posted_clusters.get(message_id, issue_name)
+                discussion_message_id = client.get_discussion(message_id, issue_name)
 
                 new_docs_pub_time = 0
                 for doc in cluster.docs:
                     if not posted_cluster.has(doc):
                         posted_cluster.add(doc)
                         discussion_text = renderer.render_discussion_message(doc)
-                        client.send_discussion_message(discussion_text, discussion_message_id)
+                        client.send_discussion_message(discussion_text, discussion_message_id, issue_name)
                         new_docs_pub_time = max(doc.pub_time, new_docs_pub_time)
                         sleep(0.3)
                 current_ts = get_current_ts()
@@ -112,7 +111,7 @@ def main(
                     print("Discussion message id: {}".format(discussion_message_id))
 
                     is_caption = bool(posted_cluster.images) or bool(posted_cluster.videos)
-                    response = client.update_message(message_id, cluster_text, is_caption)
+                    response = client.update_message(message_id, cluster_text, is_caption, issue_name)
                     print("Update status code:", response.status_code)
                     if response.status_code != 200:
                         print("Update error:", response.text)
@@ -125,8 +124,9 @@ def main(
             print()
             print("New cluster:", cluster.cropped_title)
 
-            client.update_discussion_mapping()
-            response = client.send_message(cluster_text, photos=cluster.images, videos=cluster.videos)
+            issue_name = "main"
+            client.update_discussion_mapping(issue_name)
+            response = client.send_message(cluster_text, issue_name, photos=cluster.images, videos=cluster.videos)
             print("Send status code:", response.status_code)
             if response.status_code != 200:
                 print("Send error:", response.text)
@@ -135,7 +135,7 @@ def main(
             result = response.json()["result"]
             message_id = int(result["message_id"] if "message_id" in result else result[0]["message_id"])
             cluster.message_id = message_id
-            posted_clusters[message_id] = cluster
+            posted_clusters.set(message_id, issue_name, cluster)
             cluster.create_time = get_current_ts()
             print("Message id: {}, saving".format(message_id))
             if posted_clusters_path:
@@ -143,13 +143,13 @@ def main(
             if mongo_config_path:
                 posted_clusters.save_to_mongo(mongo_config_path)
 
-            client.update_discussion_mapping()
-            discussion_message_id = client.get_discussion(message_id)
+            client.update_discussion_mapping(issue_name)
+            discussion_message_id = client.get_discussion(message_id, issue_name)
             print("Discussion message id: {}".format(discussion_message_id))
 
             for doc in cluster.docs:
                 discussion_text = renderer.render_discussion_message(doc)
-                client.send_discussion_message(discussion_text, discussion_message_id)
+                client.send_discussion_message(discussion_text, discussion_message_id, issue_name)
                 sleep(0.3)
 
         print()
